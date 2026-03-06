@@ -70,23 +70,30 @@ function enqueue(toAgent, msg) {
   }
   pendingQueues.get(toAgent).push(msg);
   r2rBus.emit('r2r:message', msg);
-  // Wake the target agent's heartbeat immediately so it processes the message
-  // without waiting for a scheduled cron tick.
+  // Wake the target agent's heartbeat immediately. If the message carries a
+  // replySessionKey, pass it so the heartbeat runs in that session context
+  // (i.e. the original channel session that originated the request).
   if (_requestHeartbeatNow) {
-    _requestHeartbeatNow({ agentId: toAgent, reason: 'r2r:incoming' });
+    const wakeOpts = { agentId: toAgent, reason: 'r2r:incoming' };
+    const replySessionKey = msg.metadata && msg.metadata.replySessionKey;
+    if (replySessionKey) wakeOpts.sessionKey = replySessionKey;
+    _requestHeartbeatNow(wakeOpts);
   }
 }
 
 // Tool factory: called per-session with agent context.
 // Returns two tools for the agent: send and receive.
-function createR2RTools(agentId, logger) {
+// sessionKey: the current session key (e.g. the Feishu session that triggered this run).
+function createR2RTools(agentId, sessionKey, logger) {
   const sendTool = {
     label: 'Send R2R Message',
     name: 'send_r2r_message',
     description:
       'Send a structured R2R (Robot-to-Robot) message to another agent. ' +
       'Use this to delegate tasks, request information, or coordinate with other agents. ' +
-      'The message is queued for the target agent and auto-ACKed on receipt.',
+      'The message is queued for the target agent and auto-ACKed on receipt. ' +
+      'When responding to an R2R request, pass the replySessionKey from the original message ' +
+      'so the reply is routed back to the originating channel.',
     parameters: {
       type: 'object',
       properties: {
@@ -119,10 +126,19 @@ function createR2RTools(agentId, logger) {
           type: 'string',
           description: 'Optional conversation/context ID to group related messages',
         },
+        replySessionKey: {
+          type: 'string',
+          description:
+            'Session key of the originating channel (copied from the incoming R2R request). ' +
+            'Ensures the final reply is routed back to that channel (e.g. Feishu → Feishu).',
+        },
       },
       required: ['toAgent', 'themeId', 'purpose', 'content'],
     },
     execute: async (_toolCallId, input) => {
+      // Determine the reply session key: explicit input takes priority,
+      // then the current session (so the origin channel is preserved on first send).
+      const replySessionKey = input.replySessionKey || sessionKey || undefined;
       const msg = buildMessage({
         fromAgent: agentId,
         toAgent: input.toAgent,
@@ -135,6 +151,7 @@ function createR2RTools(agentId, logger) {
         metadata: {
           notifyUser: input.notifyUser === true,
           contextId: input.contextId,
+          ...(replySessionKey ? { replySessionKey } : {}),
         },
       });
       enqueue(input.toAgent, msg);
@@ -212,11 +229,12 @@ module.exports = function register(api) {
 
   logger.info('[agent-r2r] registering plugin');
 
-  // Register tools via factory so each session/agent gets its own agentId binding.
+  // Register tools via factory so each session/agent gets its own agentId + sessionKey binding.
   api.registerTool(
     (ctx) => {
       const agentId = ctx.agentId || 'unknown';
-      return createR2RTools(agentId, logger);
+      const sessionKey = ctx.sessionKey || undefined;
+      return createR2RTools(agentId, sessionKey, logger);
     },
     { names: ['send_r2r_message', 'receive_r2r_messages'] },
   );
@@ -301,12 +319,16 @@ module.exports = function register(api) {
       '',
     ];
     for (const msg of messages) {
+      const replySessionKey = msg.metadata && msg.metadata.replySessionKey;
       lines.push(
         `--- 消息 ${msg.header.messageId.slice(0, 8)} ---`,
         `发件人: ${msg.header.fromAgent}`,
         `主题: ${msg.body.themeTitle || msg.body.themeId}`,
         `类型: ${msg.body.purpose}`,
         `内容: ${msg.body.content}`,
+        // Tell the agent to carry the replySessionKey when responding, so the
+        // reply is routed back to the originating channel (e.g. Feishu → Feishu).
+        replySessionKey ? `回复时请携带 replySessionKey: ${replySessionKey}` : '',
         '',
       );
     }
