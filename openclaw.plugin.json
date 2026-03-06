@@ -1,0 +1,16 @@
+{
+  "id": "agent-r2r",
+  "name": "Agent R2R Capability",
+  "description": "Injects R2R (Robot-to-Robot) messaging capability into agents via tools and gateway methods. Agents get send_r2r_message and receive_r2r_messages tools for structured inter-agent communication.",
+  "version": "0.2.0",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "displayLayerEnabled": {
+        "type": "boolean",
+        "description": "Default notifyUser value for outbound R2R messages (default: false)"
+      }
+    },
+    "additionalProperties": false
+  }
+}

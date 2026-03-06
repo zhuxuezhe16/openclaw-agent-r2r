@@ -1,0 +1,10 @@
+{
+  "name": "agent-r2r",
+  "version": "0.2.0",
+  "main": "index.js",
+  "license": "MIT",
+  "description": "OpenClaw Agent R2R Capability Plugin — injects send_r2r_message / receive_r2r_messages tools and r2r.send / r2r.status gateway methods",
+  "openclaw": {
+    "extensions": ["./index.js"]
+  }
+}
